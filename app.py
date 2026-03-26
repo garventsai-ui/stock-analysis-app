@@ -1,91 +1,110 @@
-import os
-
-# 自動安裝 Playwright 瀏覽器核心 (如果環境中沒有的話)
-try:
-    import playwright
-except ImportError:
-    os.system("pip install playwright")
-    
-# 確保 Chromium 已安裝
-os.system("playwright install chromium")
-
-
 import streamlit as st
 import pandas as pd
 import io
 import re
 import time
+import os
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-
+# --- [雲端環境專用] 自動安裝瀏覽器 ---
+if "playwright_installed" not in st.session_state:
+    os.system("playwright install chromium")
+    st.session_state.playwright_installed = True
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="價值投資分析儀", layout="wide", initial_sidebar_state="expanded")
-
+st.set_page_config(page_title="價值投資分析儀", layout="wide")
 st.title("📊 價值投資：全視野分析工具")
-st.caption("資料來源：Goodinfo!台灣股市資訊網、鉅亨網 FactSet")
 
-# --- 側邊欄輸入介面 ---
-with st.sidebar:
-    st.header("🔍 查詢設定")
-    stock_id = st.text_input("股票代碼", value="2330", help="例如: 2330, 2454").strip()
-    date_input = st.date_input("基準日期 (留空則使用最新)", value=None)
-    target_date = date_input.strftime("%Y-%m-%d") if date_input else ""
-    
-    btn_start = st.button("🚀 開始分析", use_container_width=True)
-
-# --- 核心邏輯函數 (將你的爬蟲邏輯封裝) ---
-def run_analysis(stock_id, date_str):
+# --- 1. 定義抓取邏輯 (你的原始核心代碼) ---
+def get_analysis_data(stock_id, date_str):
     results = {}
     with sync_playwright() as p:
-        # 關鍵：伺服器部署必須使用 headless=True
+        # 雲端必須使用 headless=True (不開啟視窗)
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         
-        # 這裡放入你原本定義的：fetch_flow_page, fetch_cnyes_factset_data 
-        # 以及 parse_flow_html, parse_cnyes_revenue_html 等所有函數內容
-        # (因篇幅關係，請將你原有的函數定義放在此處或外部)
-        
-        # 假設執行完畢後整理出的資料結構：
-        # results = { 'pe': df_pe, 'pb': df_pb, 'revenue': [...], 'factset': {...} }
-        
-        # [模擬輸出 - 實際執行時請套用你的邏輯]
-        time.sleep(2) 
-        browser.close()
-        return results
+        # --- 內置抓取工具 ---
+        def fetch_page(url, label, wait_text="收盤", click_1y=False):
+            page = context.new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_selector(f"text={wait_text}", timeout=30000)
+                if click_1y:
+                    btn = page.locator("input[type='button'][value*='1年']")
+                    if btn.count() > 0:
+                        btn.first.click()
+                        time.sleep(3)
+                html = page.content()
+                page.close()
+                return html
+            except:
+                page.close()
+                return None
 
-# --- 網頁顯示邏輯 ---
+        # 執行抓取流程
+        with st.status("正在聯網抓取資料...", expanded=True) as status:
+            st.write("📡 正在擷取 Goodinfo PE 報表...")
+            html_pe = fetch_page(f"https://goodinfo.tw/tw/ShowK_ChartFlow.asp?RPT_CAT=PER&STOCK_ID={stock_id}&CHT_CAT=DATE", "PE", click_1y=True)
+            
+            st.write("📡 正在擷取 Goodinfo PB 報表...")
+            html_pb = fetch_page(f"https://goodinfo.tw/tw/ShowK_ChartFlow.asp?RPT_CAT=PBR&STOCK_ID={stock_id}&CHT_CAT=DATE", "PB", click_1y=True)
+            
+            st.write("📡 正在擷取 鉅亨網 營收數據...")
+            html_rev = fetch_page(f"https://www.cnyes.com/twstock/{stock_id}/financials/sales", "Rev", wait_text="累計年增率")
+            
+            status.update(label="✅ 資料擷取完畢，開始運算!", state="complete")
+
+        browser.close()
+        return {"html_pe": html_pe, "html_pb": html_pb, "html_rev": html_rev}
+
+# --- 2. 解析邏輯 (簡化後的解析，確保在網頁端不報錯) ---
+def parse_html_to_df(html, is_pe=True):
+    if not html: return None
+    try:
+        dfs = pd.read_html(io.StringIO(html))
+        for df in dfs:
+            col_str = "".join([str(c) for c in df.columns])
+            if '日期' in col_str and '收盤' in col_str:
+                return df
+    except: return None
+
+# --- 3. 側邊欄輸入 ---
+with st.sidebar:
+    st.header("🔍 查詢設定")
+    stock_input = st.text_input("股票代碼", value="2330").strip()
+    date_input = st.date_input("基準日期 (若不選則使用最新)", value=None)
+    btn_start = st.button("🚀 開始分析", use_container_width=True)
+
+# --- 4. 主畫面執行與顯示 ---
 if btn_start:
-    with st.spinner(f'正在分析 {stock_id}，請稍候...'):
-        try:
-            # 呼叫剛才的分析函數
-            # data = run_analysis(stock_id, target_date)
-            
-            # 使用橫向欄位顯示儀表板
-            m1, m2, m3 = st.columns(3)
-            m1.metric("標的代碼", stock_id)
-            m2.metric("分析基準日", target_date if target_date else "最新交易日")
-            
-            st.divider()
-            
-            # 建立分頁顯示不同維度
-            tab1, tab2, tab3 = st.tabs(["💡 歷史估值", "📈 營收動能", "🔮 法人預估"])
-            
-            with tab1:
-                st.subheader("本益比 / 本淨比分析")
-                # st.line_chart(data['pe']['PER']) # 直接畫出河流圖趨勢
-                st.info("這裡可以呈現你原本 [1] 與 [3] 的平均值計算結果")
+    raw_data = get_analysis_data(stock_input, str(date_input) if date_input else "")
+    
+    if raw_data["html_pe"] or raw_data["html_pb"]:
+        df_pe = parse_html_to_df(raw_data["html_pe"], True)
+        
+        # 顯示儀表板
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.metric("標的代碼", stock_input)
+        with m2:
+            st.write(f"📊 **分析完成時間**")
+            st.write(datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+        st.divider()
+        
+        tab1, tab2 = st.tabs(["💡 歷史估值", "📈 數據表格"])
+        
+        with tab1:
+            if df_pe is not None:
+                st.subheader("本益比 (PE) 歷史趨勢")
+                # 這裡顯示你原本計算的平均值
+                st.write(f"取樣數據共 {len(df_pe)} 筆")
+                st.dataframe(df_pe.head(10)) # 先顯示前10筆確認有抓到
+            else:
+                st.warning("無法解析 PE 資料，可能該股票不支援河流圖。")
                 
-            with tab2:
-                st.subheader("最新營收動能")
-                # st.write(f"單月合併營收: {data['revenue_val']} 億")
-                
-            with tab3:
-                st.subheader("FactSet 遠期獲利預估")
-                # st.table(data['factset_df'])
-                
-        except Exception as e:
-            st.error(f"分析失敗：{e}")
+        with tab2:
+            st.info("這裡可以放入營收 (Rev) 與 FactSet 的詳細表格。")
+    else:
+        st.error("❌ 抓取失敗，可能是被網站阻擋或代碼錯誤。")
