@@ -20,6 +20,11 @@ st.title("📊 價值投資：全視野分析工具")
 def get_analysis_data(stock_id, date_str):
     results = {}
     with sync_playwright() as p:
+        # 新增 args 參數，這在雲端環境非常重要！
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        )
         # 雲端必須使用 headless=True (不開啟視窗)
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
