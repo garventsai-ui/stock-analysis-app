@@ -6,7 +6,11 @@ import time
 import os
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import subprocess
 
+# 在程式碼最開頭加入這行，強制安裝瀏覽器依賴
+subprocess.run(["playwright", "install", "chromium"])
+subprocess.run(["playwright", "install-deps"])
 # --- [雲端環境專用] 自動安裝瀏覽器 ---
 if "playwright_installed" not in st.session_state:
     os.system("playwright install chromium")
