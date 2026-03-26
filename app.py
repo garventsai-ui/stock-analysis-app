@@ -1,3 +1,15 @@
+import os
+
+# 自動安裝 Playwright 瀏覽器核心 (如果環境中沒有的話)
+try:
+    import playwright
+except ImportError:
+    os.system("pip install playwright")
+    
+# 確保 Chromium 已安裝
+os.system("playwright install chromium")
+
+
 import streamlit as st
 import pandas as pd
 import io
@@ -5,6 +17,8 @@ import re
 import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="價值投資分析儀", layout="wide", initial_sidebar_state="expanded")
